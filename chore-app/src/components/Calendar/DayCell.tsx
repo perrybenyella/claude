@@ -1,4 +1,4 @@
-import { format, isSameDay, isSameMonth, isToday } from 'date-fns';
+import { format, isSameMonth, isToday } from 'date-fns';
 import { useAppStore } from '../../store/useAppStore';
 
 interface DayCellProps {

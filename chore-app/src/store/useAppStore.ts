@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { TeamMember, Chore, ChoreInput } from '../types';
 import { getChoresForDate as filterChoresForDate } from '../utils/recurrenceUtils';
 import { startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
@@ -41,12 +42,14 @@ const generateId = (): string => {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 };
 
-export const useAppStore = create<AppState>((set, get) => ({
-  // Initial state
-  teamMembers: [],
-  chores: [],
-  selectedDate: null,
-  currentMonth: new Date(),
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      // Initial state
+      teamMembers: [],
+      chores: [],
+      selectedDate: null,
+      currentMonth: new Date(),
 
   // Team member actions
   addTeamMember: (name: string) => {
@@ -144,4 +147,86 @@ export const useAppStore = create<AppState>((set, get) => ({
       return false;
     });
   }
-}));
+}),
+    {
+      name: 'chore-app-storage',
+      storage: createJSONStorage(() => localStorage, {
+        reviver: (_key, value) => {
+          // Convert ISO date strings back to Date objects
+          if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/.test(value)) {
+            return new Date(value);
+          }
+          return value;
+        },
+        replacer: (_key, value) => {
+          // Date objects are automatically serialized to ISO strings by JSON.stringify
+          return value;
+        }
+      }),
+      partialize: (state) => ({
+        teamMembers: state.teamMembers,
+        chores: state.chores,
+        currentMonth: state.currentMonth,
+        selectedDate: state.selectedDate
+      }),
+      // Notify other tabs when state is persisted
+      onRehydrateStorage: () => {
+        return (_state, error) => {
+          if (error) {
+            console.error('Failed to rehydrate store:', error);
+          }
+        };
+      }
+    }
+  )
+);
+
+// Helper function to manually trigger rehydration from localStorage
+// This is called when other tabs update the shared state
+export const rehydrateStore = () => {
+  const storedValue = localStorage.getItem('chore-app-storage');
+  if (storedValue) {
+    try {
+      const { state } = JSON.parse(storedValue, (_key, value) => {
+        // Convert ISO date strings back to Date objects
+        if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/.test(value)) {
+          return new Date(value);
+        }
+        return value;
+      });
+
+      // Update the store with rehydrated state
+      useAppStore.setState(state, true);
+    } catch (error) {
+      console.error('Failed to rehydrate store manually:', error);
+    }
+  }
+};
+
+// Subscribe to store changes and broadcast to other tabs
+// This is set up in App.tsx
+let unsubscribe: (() => void) | null = null;
+
+export const subscribeToStoreChanges = (broadcast: () => void) => {
+  // Unsubscribe from previous subscription if exists
+  if (unsubscribe) {
+    unsubscribe();
+  }
+
+  // Subscribe to all state changes
+  unsubscribe = useAppStore.subscribe((state, prevState) => {
+    // Only broadcast if the persisted state has actually changed
+    // (ignore computed helper changes)
+    const hasChanged =
+      state.teamMembers !== prevState.teamMembers ||
+      state.chores !== prevState.chores ||
+      state.currentMonth !== prevState.currentMonth ||
+      state.selectedDate !== prevState.selectedDate;
+
+    if (hasChanged) {
+      broadcast();
+    }
+  });
+
+  return unsubscribe;
+};

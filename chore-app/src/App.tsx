@@ -4,25 +4,36 @@ import { TeamMemberList } from './components/Team/TeamMemberList';
 import { TeamMemberForm } from './components/Team/TeamMemberForm';
 import { ChoreForm } from './components/Chores/ChoreForm';
 import { ChoreList } from './components/Chores/ChoreList';
-import { useAppStore } from './store/useAppStore';
+import { useAppStore, rehydrateStore, subscribeToStoreChanges } from './store/useAppStore';
+import { initTabSync, cleanupTabSync, broadcastStateUpdate } from './utils/tabSyncManager';
 import './styles/index.css';
 
 function App() {
   const teamMembers = useAppStore(state => state.teamMembers);
-  const chores = useAppStore(state => state.chores);
 
-  // Warn before leaving if there's data
+  // Initialize cross-tab synchronization
   useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (chores.length > 0 || teamMembers.length > 0) {
-        e.preventDefault();
-        e.returnValue = 'You have unsaved data. Are you sure you want to leave?';
+    // Initialize tab sync - when other tabs update, rehydrate our store
+    initTabSync(() => {
+      rehydrateStore();
+    });
+
+    // Subscribe to our store changes and broadcast to other tabs
+    const unsubscribe = subscribeToStoreChanges(() => {
+      broadcastStateUpdate();
+    });
+
+    // Cleanup on unmount
+    return () => {
+      cleanupTabSync();
+      if (unsubscribe) {
+        unsubscribe();
       }
     };
+  }, []);
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [chores.length, teamMembers.length]);
+  // Note: Data is now persisted to localStorage, so it won't be lost on page refresh
+  // The beforeunload warning has been removed since data is automatically saved
 
   return (
     <div className="app">
